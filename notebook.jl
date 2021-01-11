@@ -24,11 +24,11 @@ begin
 	using Plots
 end
 
-# ╔═╡ 381d9680-5295-11eb-36ca-c98aa3b8b8ef
-Shape
-
 # ╔═╡ c4ae48a0-51ec-11eb-10d4-b37e6e3d9613
 auxin_cmap = ColorSchemes.davos
+
+# ╔═╡ 9d679400-5367-11eb-10db-4d7dd001f20b
+pins_cmap = ColorSchemes.bilbao
 
 # ╔═╡ 45ae1c00-51de-11eb-1177-152d8608f121
 function show_maze(maze)
@@ -76,7 +76,7 @@ begin  # Definition of cell indices
 	for I in CartesianIndices(maze)
 		if !is_wall(maze[I])
 			cell_ids[I] = cid
-			push!(positions, Tuple(I))
+			push!(positions, [Tuple(I)...])
 			cid += 1
 		end
 	end
@@ -112,8 +112,8 @@ end
 	αp::Float64 = 0  # PINS production
 	βp::Float64 = 0  # PINS degradation
 	V::Float64 = 1  # Cell volume
-	μ::Float64 = 1  # PINS removal rate
-	λ::Float64 = 1  # PINS insertion rate
+	μ::Float64 = 0.1  # PINS removal rate
+	λ::Float64 = 0.1  # PINS insertion rate
 end
 
 # ╔═╡ 7f6c1b80-5135-11eb-3ced-07c6f5301780
@@ -124,13 +124,20 @@ begin  # Define graph with auxin and pins
 	
 	for v in vertices(system)
 		set_prop!(system, v, :auxin, 0.0)
-		set_prop!(system, v, :pins, 0.0)
+		set_prop!(system, v, :pins, 1.0)
 		set_prop!(system, v, :position, positions[v])
 		set_prop!(system, v, :params, CellParameters())
 	end
 	
-	# Put something somewhere
-	set_prop!(system, 1, :params, CellParameters(αa=10))
+	# Set source
+	source = 1
+	set_prop!(system, source, :params, CellParameters(αa=50))
+	set_prop!(system, source, :source, true)
+	
+	# Set sink
+	sink = 32
+	set_prop!(system, sink, :params, CellParameters(αa=0, βa=10))
+	set_prop!(system, sink, :sink, true)
 	
 	# Edges are directed so we get difference between ij and ji
 	for edge in edges(system)
@@ -141,35 +148,71 @@ begin  # Define graph with auxin and pins
 	system
 end
 
+# ╔═╡ 915c6cb0-5373-11eb-3425-33201835c539
+corners = [
+	[+1, +1],
+	[+1, -1],
+	[-1, -1],
+	[-1, +1]
+]
+
 # ╔═╡ 5ae66c70-51d0-11eb-2bce-61a3ca3dd780
-function cell_corners(system, i ; pad = 0.4)
-	x, y = get_prop(system, i, :position)
-	points = [
-		[x + pad, y + pad],
-		[x + pad, y - pad],
-		[x - pad, y - pad],
-		[x - pad, y + pad]
-	]
-	return Tuple.(points)
+function cell_corners(system, i, pad)
+	pos = get_prop(system, i, :position)
+	outer_corners = [corner .+ pos for corner in corners .* pad]
+	return Shape(Tuple.(outer_corners))
+end
+
+# ╔═╡ 287fd910-5392-11eb-3389-d387f969a34d
+function cell_interface(system, i, j, inner_pad, outer_pad)
+	posi = get_prop(system, i, :position)
+	posj = get_prop(system, j, :position)
+	
+	center = (posi + posj) ./ 2
+	dv = 0.5.*(posj - posi)  # Vector from i to j
+	v_perp = [dv[2], dv[1]]  # Perpendicular vector to dv
+	
+	corners = [center + v_perp, center - v_perp]
+
+	out_corners = [(c - posi) .* 2outer_pad + posi for c in corners]
+	in_corners = [(c - posi) .* 2inner_pad + posi for c in corners]
+	
+	return Shape(Tuple.([out_corners[1], out_corners[2], in_corners[2], in_corners[1]]))
 end
 
 # ╔═╡ bb9cf8d0-51d6-11eb-28f3-17459599a99f
-function draw_cell(plt, system, i, ; pad = 0.4, max_auxin = 10.0)
+function draw_cell(plt, system, i, ; inner_pad = 0.3, outer_pad = 0.45, max_auxin = 10.0, max_pins = 0.5)
 	ai = get_prop(system, i, :auxin)
 	c = 1 - ai / max_auxin
-	cell = Shape(
-		cell_corners(system, i)
-	)
-	plot!(plt, cell, fillcolor=get(auxin_cmap, c))
+	inner_cell = cell_corners(system, i, inner_pad)
+	plot!(plt, inner_cell, fillcolor=get(auxin_cmap, c), linewidth=0)
+	
+	for j in neighbors(system, i)
+		interface = cell_interface(system, i, j, inner_pad, outer_pad)
+		pij = get_prop(system, i, j, :pins)
+		c = pij / max_pins
+		plot!(plt, interface, fillcolor=get(pins_cmap, c), linewidth=0)
+	end
+	
+	outer_cell = cell_corners(system, i, outer_pad)
+	plot!(plt, outer_cell, fillcolor=nothing)
+	
+	x, y = get_prop(system, i, :position)
+	if has_prop(system, i, :source)
+		plot!(plt, annotations=(x, y, "A"))
+	end
+	if has_prop(system, i, :sink)
+		plot!(plt, annotations=(x, y, "Ω"))
+	end
 end
 
 # ╔═╡ 7e0e0b80-51cc-11eb-32a1-23e61e9e7703
-function draw_system(system)
+function draw_system(system ; size=(1200, 1200))
 	w, h = get_prop(system, :size)
 	plt = plot(
 		bg = :white,
 		framestyle = :none,
-		size = (300, 300),
+		size = size,
 		legend = false,
 		xlim=(0, w + 1),
 		ylim=(0, h + 1)
@@ -241,8 +284,8 @@ dt = 0.1
 
 # ╔═╡ 85ee1b30-51ca-11eb-3d97-2b90f8d7c249
 begin  # Simulate
-	n_frames = 1000
-	save_each = 10
+	n_frames = 10000
+	save_each = 100
 	
 	systems = [system]
 	frames = [1]
@@ -280,8 +323,8 @@ draw_system(systems[F])
 
 # ╔═╡ Cell order:
 # ╠═d597cbe0-512f-11eb-09d7-c337a535978e
-# ╠═381d9680-5295-11eb-36ca-c98aa3b8b8ef
-# ╠═c4ae48a0-51ec-11eb-10d4-b37e6e3d9613
+# ╟─c4ae48a0-51ec-11eb-10d4-b37e6e3d9613
+# ╟─9d679400-5367-11eb-10db-4d7dd001f20b
 # ╠═45ae1c00-51de-11eb-1177-152d8608f121
 # ╠═f22cb0e0-512f-11eb-2ede-bb187108b83e
 # ╠═6c924060-5136-11eb-3c87-e1673c1aa5c4
@@ -290,7 +333,9 @@ draw_system(systems[F])
 # ╠═89581372-51c5-11eb-178e-3b96ab51a5cb
 # ╠═7f6c1b80-5135-11eb-3ced-07c6f5301780
 # ╠═5f9fa750-5297-11eb-1203-31f0a9e09f31
+# ╠═915c6cb0-5373-11eb-3425-33201835c539
 # ╠═5ae66c70-51d0-11eb-2bce-61a3ca3dd780
+# ╠═287fd910-5392-11eb-3389-d387f969a34d
 # ╠═bb9cf8d0-51d6-11eb-28f3-17459599a99f
 # ╠═7e0e0b80-51cc-11eb-32a1-23e61e9e7703
 # ╠═c4205290-51c2-11eb-066b-3fbd0dfd0f49
