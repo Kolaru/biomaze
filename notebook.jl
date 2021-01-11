@@ -64,12 +64,16 @@ begin
 		return indices
 	end
 	
-	is_wall(tile_id) = (tile_id == 0)  # Walls have tile id 0, others tile id -1
+	is_wall(tile_id) = (tile_id == 0)
+	is_source(tile_id) = (tile_id == 2)
+	is_sink(tile_id) = (tile_id == 3)
+	
+	tile(maze, pos::CartesianIndex) = maze[pos]
+	tile(maze, pos::Array) = maze[pos[1], pos[2]]
 end
 
 # ╔═╡ 670adc60-51a9-11eb-335c-9b76117d94de
 begin  # Definition of cell indices
-	
 	cell_ids = zeros(Int, size(maze))  # Define cell id for each non wall cell
 	cid = 1  # Current cell id
 	positions = []  # Store position of each cell for plotting later
@@ -126,18 +130,19 @@ begin  # Define graph with auxin and pins
 		set_prop!(system, v, :auxin, 0.0)
 		set_prop!(system, v, :pins, 1.0)
 		set_prop!(system, v, :position, positions[v])
-		set_prop!(system, v, :params, CellParameters())
+		
+		tile_id = tile(maze, positions[v])
+		
+		if is_source(tile_id)
+			set_prop!(system, v, :params, CellParameters(αa=50))
+			set_prop!(system, v, :source, true)
+		elseif is_sink(tile_id)
+			set_prop!(system, v, :params, CellParameters(αa=0, βa=10))
+			set_prop!(system, v, :sink, true)
+		else
+			set_prop!(system, v, :params, CellParameters())
+		end
 	end
-	
-	# Set source
-	source = 1
-	set_prop!(system, source, :params, CellParameters(αa=50))
-	set_prop!(system, source, :source, true)
-	
-	# Set sink
-	sink = 32
-	set_prop!(system, sink, :params, CellParameters(αa=0, βa=10))
-	set_prop!(system, sink, :sink, true)
 	
 	# Edges are directed so we get difference between ij and ji
 	for edge in edges(system)
